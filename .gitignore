@@ -1,6 +1,12 @@
 # Ignore Terraform local state and temporary directories
-.terraform/
+# Local Terraform state files
 *.tfstate
+*.tfstate.*
 *.tfstate.backup
+
+# Terraform local directory
+.terraform/
+
+# Variable files containing secrets
 *.tfvars
-.terraform.lock.hcl
+*.tfvars.json

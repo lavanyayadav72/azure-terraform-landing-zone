@@ -6,6 +6,13 @@ terraform {
       version = "~> 3.0"
     }
   }
+
+  backend "azurerm" {
+    resource_group_name  = "rg-tfstate-prod-01"
+    storage_account_name = "sttfstatelav01" # <--- UPDATE THIS NAME
+    container_name       = "tfstate"
+    key                  = "hub-spoke.tfstate"
+  }
 }
 
 provider "azurerm" {
