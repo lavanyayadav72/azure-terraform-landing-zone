@@ -7,29 +7,31 @@ This repository contains the Infrastructure as Code (IaC) written in **Terraform
 
 The infrastructure isolates core connectivity services (Hub VNet) from application workloads (Spoke VNet), enforcing security boundaries through Network Security Groups (NSGs) and User-Defined Routes (UDRs).
 
-+------------------------------------------+
-                  |               HUB VNET                   |
-                  |            (10.0.0.0/16)                 |
-                  |                                          |
-                  |  [GatewaySubnet]    [AzureFirewallSubnet]|
-                  |  (10.0.0.0/27)        (10.0.1.0/26)    |
-                  |                                          |
-                  |          [AzureBastionSubnet]            |
-                  |             (10.0.2.0/26)                |
-                  +--------------------+---------------------+
-                                       |
-                             Bidirectional VNet
-                                  Peering
-                                       |
-                  +--------------------+---------------------+
-                  |              SPOKE VNET                  |
-                  |            (10.1.0.0/16)                 |
-                  |                                          |
-                  |  [snet-agw]   (10.1.1.0/24)              |
-                  |  [snet-app]   (10.1.2.0/24) --> NSG & UDR|
-                  |  [snet-db]    (10.1.3.0/24) --> NSG & UDR|
-                  |  [snet-mgmt]  (10.1.4.0/24)              |
-                  +------------------------------------------+
+```text
+                      +------------------------------------------+
+                      |               HUB VNET                   |
+                      |            (10.0.0.0/16)                 |
+                      |                                          |
+                      |  [GatewaySubnet]    [AzureFirewallSubnet]|
+                      |  (10.0.0.0/27)        (10.0.1.0/26)    |
+                      |                                          |
+                      |          [AzureBastionSubnet]            |
+                      |             (10.0.2.0/26)                |
+                      +--------------------+---------------------+
+                                           |
+                                 Bidirectional VNet
+                                      Peering
+                                           |
+                      +--------------------+---------------------+
+                      |              SPOKE VNET                  |
+                      |            (10.1.0.0/16)                 |
+                      |                                          |
+                      |  [snet-agw]   (10.1.1.0/24)              |
+                      |  [snet-app]   (10.1.2.0/24) --> NSG & UDR|
+                      |  [snet-db]    (10.1.3.0/24) --> NSG & UDR|
+                      |  [snet-mgmt]  (10.1.4.0/24)              |
+                      +------------------------------------------+
+```
 
 ### Key Components Provisioned
 
