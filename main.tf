@@ -333,3 +333,223 @@ resource "azurerm_application_gateway" "agw" {
     priority                   = 100
   }
 }
+
+# ==========================================
+# Module 05: Azure Firewall Integration
+# ==========================================
+
+# 1. Public IP for Azure Firewall
+resource "azurerm_public_ip" "fw_pip" {
+  name                = "pip-fw-prod-01"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+# 2. Azure Firewall Policy (Modern Management)
+resource "azurerm_firewall_policy" "fw_policy" {
+  name                = "afwp-hub-prod-01"
+  resource_group_name = azurerm_resource_group.hub.name
+  location            = azurerm_resource_group.hub.location
+  sku                 = "Standard"
+}
+
+# 3. Azure Firewall Instance
+resource "azurerm_firewall" "fw" {
+  name                = "fw-hub-prod-01"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  sku_name            = "AZFW_VNet"
+  sku_tier            = "Standard"
+  firewall_policy_id  = azurerm_firewall_policy.fw_policy.id
+
+  ip_configuration {
+    name                 = "fw-ip-config"
+    subnet_id            = azurerm_subnet.firewall.id
+    public_ip_address_id = azurerm_public_ip.fw_pip.id
+  }
+}
+
+# 4. Firewall Rule Collections (Network & Application Rules)
+resource "azurerm_firewall_policy_rule_collection_group" "fw_rules" {
+  name               = "fw-policy-rule-collection-group"
+  firewall_policy_id = azurerm_firewall_policy.fw_policy.id
+  priority           = 500
+
+  # --- NETWORK RULES ---
+  network_rule_collection {
+    name     = "Allow-Internal-And-Outbound-Traffic"
+    priority = 100
+    action   = "Allow"
+
+    rule {
+      name                  = "Allow-AppSubnet-To-Internet-HTTP-HTTPS"
+      protocols             = ["TCP"]
+      source_addresses      = ["10.1.2.0/24"] # snet-app
+      destination_addresses = ["*"]
+      destination_ports     = ["80", "443"]
+    }
+
+    rule {
+      name                  = "Allow-App-To-DB-SQL"
+      protocols             = ["TCP"]
+      source_addresses      = ["10.1.2.0/24"] # snet-app
+      destination_addresses = ["10.1.3.0/24"] # snet-db
+      destination_ports     = ["1433"]
+    }
+  }
+
+  # --- APPLICATION RULES (FQDN Filtering) ---
+  application_rule_collection {
+    name     = "Allow-Outbound-Core-Services"
+    priority = 200
+    action   = "Allow"
+
+    rule {
+      name = "Allow-Ubuntu-Updates-And-Microsoft"
+      source_addresses = [
+        "10.1.2.0/24", # snet-app
+        "10.1.4.0/24"  # snet-mgmt
+      ]
+      destination_fqdns = [
+        "*.ubuntu.com",
+        "*.canonical.com",
+        "*.microsoft.com"
+      ]
+
+      protocols {
+        type = "Http"
+        port = 80
+      }
+      protocols {
+        type = "Https"
+        port = 443
+      }
+    }
+  }
+}
+
+# 5. Enable Route Table Association for App Subnet (Uncommented)
+resource "azurerm_subnet_route_table_association" "app_udr_assoc" {
+  subnet_id      = azurerm_subnet.snet_app.id
+  route_table_id = azurerm_route_table.spoke_udr.id
+}
+
+# ==========================================
+# Module 06: Database & Private Endpoints
+# ==========================================
+
+# 1. Random Password for SQL Admin
+resource "random_password" "sql_admin_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+# 2. Azure SQL Logical Server (Public Access Disabled)
+resource "azurerm_mssql_server" "sql" {
+  name                         = "sql-spoke-prod-03"
+  resource_group_name          = azurerm_resource_group.spoke.name
+  location                     = "centralus"
+  version                      = "12.0"
+  administrator_login          = "sqladmin"
+  administrator_login_password = random_password.sql_admin_password.result
+
+  # Block all public internet access
+  public_network_access_enabled = false
+}
+
+# 3. Azure SQL Database
+resource "azurerm_mssql_database" "db" {
+  name         = "sqldb-app-prod-01"
+  server_id    = azurerm_mssql_server.sql.id
+  collation    = "SQL_Latin1_General_CP1_CI_AS"
+  license_type = "LicenseIncluded"
+  sku_name     = "Basic" # Cost-effective for learning/labs
+}
+
+# 4. Private DNS Zone for Azure SQL
+resource "azurerm_private_dns_zone" "dns_sql" {
+  name                = "privatelink.database.windows.net"
+  resource_group_name = azurerm_resource_group.spoke.name
+}
+
+# 5. Link Private DNS Zone to Spoke VNet
+resource "azurerm_private_dns_zone_virtual_network_link" "dns_link_spoke" {
+  name                  = "link-sql-dns-to-spoke-vnet"
+  resource_group_name   = azurerm_resource_group.spoke.name
+  private_dns_zone_name = azurerm_private_dns_zone.dns_sql.name
+  virtual_network_id    = azurerm_virtual_network.spoke.id
+}
+
+# 6. Private Endpoint in snet-db
+resource "azurerm_private_endpoint" "pe_sql" {
+  name                = "pe-sql-prod-01"
+  location            = azurerm_resource_group.spoke.location
+  resource_group_name = azurerm_resource_group.spoke.name
+  subnet_id           = azurerm_subnet.snet_db.id
+
+  private_service_connection {
+    name                           = "psc-sql-connection"
+    private_connection_resource_id = azurerm_mssql_server.sql.id
+    subresource_names              = ["sqlServer"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "sql-dns-zone-group"
+    private_dns_zone_ids = [azurerm_private_dns_zone.dns_sql.id]
+  }
+}
+
+# ==========================================
+# Module 07: Observability & Monitoring
+# ==========================================
+
+# 1. Log Analytics Workspace (Central Log Store)
+resource "azurerm_log_analytics_workspace" "law" {
+  name                = "log-hub-prod-01"
+  location            = azurerm_resource_group.hub.location
+  resource_group_name = azurerm_resource_group.hub.name
+  sku                 = "PerGB2018"
+  retention_in_days   = 30
+}
+
+# 2. Diagnostic Settings for Application Gateway
+resource "azurerm_monitor_diagnostic_setting" "diag_agw" {
+  name                       = "diag-agw-to-law"
+  target_resource_id         = azurerm_application_gateway.agw.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "ApplicationGatewayAccessLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayPerformanceLog"
+  }
+
+  metric {
+    category = "AllMetrics"
+  }
+}
+
+# 3. Diagnostic Settings for Azure Firewall
+resource "azurerm_monitor_diagnostic_setting" "diag_fw" {
+  name                       = "diag-fw-to-law"
+  target_resource_id         = azurerm_firewall.fw.id
+  log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+
+  enabled_log {
+    category = "AzureFirewallNetworkRule"
+  }
+
+  enabled_log {
+    category = "AzureFirewallApplicationRule"
+  }
+
+  metric {
+    category = "AllMetrics"
+  }
+}
